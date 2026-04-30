@@ -1,7 +1,9 @@
 import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Image, useColorScheme } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, useColorScheme } from 'react-native';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { PALETTE } from '../constants/theme';
+import { getGif } from '../services/workoutService';
+import { Image } from 'expo-image';
 
 const WorkoutCard = ({ item, onPress }) => {
   const theme = useColorScheme() || 'light';
@@ -12,7 +14,12 @@ const WorkoutCard = ({ item, onPress }) => {
     <TouchableOpacity style={styles.card} onPress={onPress} activeOpacity={0.9}>
       
       <View style={styles.imageContainer}>
-        <Image source={{ uri: item.image }} style={styles.image} resizeMode="cover" />
+        <Image
+  source={getGif(item.gifKey) || { uri: item.image }}
+  // Same fallback pattern — local GIF first, URL if missing
+  style={styles.image}
+  resizeMode="cover"
+/>
         
        
         <View style={styles.overlay} />

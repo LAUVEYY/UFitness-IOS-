@@ -1,7 +1,6 @@
 import React from 'react';
 import { Platform, StyleSheet, View, useColorScheme } from 'react-native';
 import { Tabs } from 'expo-router';
-import { NativeTabs, Icon, Label } from 'expo-router/unstable-native-tabs';
 import { BlurView } from 'expo-blur';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
@@ -14,52 +13,11 @@ export default function TabsLayout() {
   const colors = PALETTE[theme];
   const insets = useSafeAreaInsets();
 
-  // 🍏 iOS EXCLUSIVE: True Native Liquid Glass Tabs & SF Symbols
-  if (Platform.OS === 'ios') {
-    return (
-      <NativeTabs
-        translucent={true} // <-- FIX: Forces true native glass and prevents disappearing on scroll
-        iconColor={{
-          default: colors.textDim,
-          selected: colors.primary,
-        }}
-        labelStyle={{
-          default: { color: colors.textDim },
-          selected: { color: colors.primary },
-        }}
-      >
-        <NativeTabs.Trigger name="profile">
-          <Icon sf="person.crop.circle.fill" />
-          <Label>Profile</Label>
-        </NativeTabs.Trigger>
-        
-        <NativeTabs.Trigger name="workout">
-          <Icon sf="figure.run" />
-          <Label>Workout</Label>
-        </NativeTabs.Trigger>
-        
-        <NativeTabs.Trigger name="index">
-          <Icon sf="house.fill" />
-          <Label>Home</Label>
-        </NativeTabs.Trigger>
-        
-        <NativeTabs.Trigger name="compete">
-          <Icon sf="person.2.fill" />
-          <Label>Compete</Label>
-        </NativeTabs.Trigger>
-        
-        <NativeTabs.Trigger name="daily">
-          <Icon sf="calendar.day.timeline.left" />
-          <Label>Daily</Label>
-        </NativeTabs.Trigger>
-      </NativeTabs>
-    );
-  }
+  // Ensure proper padding for bottom swiping on modern phones (iOS & Android)
+  const bottomInset = Math.max(0, insets.bottom - 20);
 
-  // 🤖 ANDROID EXCLUSIVE: Custom Glassmorphism & Vector Icons
-  const androidBottomInset = Math.max(0, insets.bottom - 25);
-
-  const renderGlowIcon = (name, focused, color, size) => (
+  // Unified Glowing Icons that fill in when active
+  const renderIcon = (name, focused, color, size) => (
     <View style={[
       styles.iconContainer,
       focused && {
@@ -70,7 +28,8 @@ export default function TabsLayout() {
         elevation: 5 
       }
     ]}>
-      <Ionicons name={name} size={size} color={color} />
+      {/* Uses the solid icon when focused, and the outline version when inactive */}
+      <Ionicons name={focused ? name : `${name}-outline`} size={size} color={color} />
     </View>
   );
 
@@ -81,26 +40,29 @@ export default function TabsLayout() {
         tabBarShowLabel: true,
         tabBarActiveTintColor: colors.primary,
         tabBarInactiveTintColor: colors.textDim,
-        tabBarTransparent: true, // <-- FIX: Disables the disappearing background bug on scroll
+        tabBarTransparent: true, // CRITICAL: Tells the router to expect absolute transparency
         tabBarLabelStyle: {
           fontSize: 11,
           fontWeight: '600',
-          marginBottom: 10, 
+          marginBottom: Platform.OS === 'ios' ? 0 : 10, 
         },
         tabBarStyle: [
           styles.tabBar,
           {
-            height: 72 + androidBottomInset, 
-            paddingBottom: androidBottomInset + 16, 
-            paddingTop: 0, 
-            backgroundColor: 'transparent', // <-- FIX: Must be strictly transparent for BlurView to persist
+            // FIX 1: Raised the iOS height back up slightly to find the perfect middle ground
+            height: Platform.OS === 'ios' ? 78 : 72 + bottomInset, 
+            paddingBottom: Platform.OS === 'ios' ? 20 : bottomInset + 16, 
+            paddingTop: Platform.OS === 'ios' ? 5 : 0, 
+            backgroundColor: 'transparent', 
           }
         ],
+        // Injects a solid Glass Blur View right behind the tabs on ALL platforms
         tabBarBackground: () => (
           <BlurView
             tint={theme === 'dark' ? 'dark' : 'light'}
-            intensity={45}
-            experimentalBlurMethod="dimezisBlurView" 
+            // FIX 2: Cranked Android intensity from 45 to 85 so it is much less transparent
+            intensity={Platform.OS === 'ios' ? 80 : 85}
+            experimentalBlurMethod={Platform.OS === 'android' ? "dimezisBlurView" : 'none'} 
             style={StyleSheet.absoluteFill}
           />
         ),
@@ -108,27 +70,27 @@ export default function TabsLayout() {
     >
       <Tabs.Screen 
         name="profile" 
-        options={{ title: "Profile", tabBarIcon: ({ focused, color, size }) => renderGlowIcon("person-outline", focused, color, size) }}
+        options={{ title: "Profile", tabBarIcon: ({ focused, color, size }) => renderIcon("person", focused, color, size) }}
         listeners={{ tabPress: () => Haptics.selectionAsync() }}
       />
       <Tabs.Screen 
         name="workout" 
-        options={{ title: "Workout", tabBarIcon: ({ focused, color, size }) => renderGlowIcon("barbell-outline", focused, color, size) }}
+        options={{ title: "Workout", tabBarIcon: ({ focused, color, size }) => renderIcon("barbell", focused, color, size) }}
         listeners={{ tabPress: () => Haptics.selectionAsync() }}
       />
       <Tabs.Screen 
         name="index" 
-        options={{ title: "Summary", tabBarIcon: ({ focused, color, size }) => renderGlowIcon("grid-outline", focused, color, size) }}
+        options={{ title: "Summary", tabBarIcon: ({ focused, color, size }) => renderIcon("grid", focused, color, size) }}
         listeners={{ tabPress: () => Haptics.selectionAsync() }}
       />
       <Tabs.Screen 
         name="compete" 
-        options={{ title: "Compete", tabBarIcon: ({ focused, color, size }) => renderGlowIcon("trophy-outline", focused, color, size) }}
+        options={{ title: "Compete", tabBarIcon: ({ focused, color, size }) => renderIcon("trophy", focused, color, size) }}
         listeners={{ tabPress: () => Haptics.selectionAsync() }}
       />
       <Tabs.Screen 
         name="daily" 
-        options={{ title: "Daily", tabBarIcon: ({ focused, color, size }) => renderGlowIcon("calendar-outline", focused, color, size) }}
+        options={{ title: "Daily", tabBarIcon: ({ focused, color, size }) => renderIcon("calendar", focused, color, size) }}
         listeners={{ tabPress: () => Haptics.selectionAsync() }}
       />
     </Tabs>
@@ -137,7 +99,8 @@ export default function TabsLayout() {
 
 const styles = StyleSheet.create({
   tabBar: {
-    position: 'absolute',
+    // Absolute positioning forces the tab bar to hover, ensuring content flows beneath it
+    position: 'absolute', 
     bottom: 0,
     left: 0,
     right: 0,
