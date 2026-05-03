@@ -30,19 +30,13 @@ jobs:
       - name: 📦 Install NPM Dependencies
         run: npm install
 
-      - name: 🧨 Purge Stale iOS Folder (Crucial for Arch Switch)
-        # This completely wipes the cached iOS folder so CocoaPods forgets about the New Architecture
-        run: rm -rf ios
-
-      - name: 🏗️ Generate Pristine Native iOS Project
+      - name: 🏗️ Generate Pristine iOS Project (Expo's Method)
+        # By removing the manual pod install, Expo handles the Podfile, React Native links, 
+        # and pod installation automatically with the correct environment variables.
         run: npx expo prebuild --platform ios --clean
 
-      - name: 🔗 Install CocoaPods
-        run: |
-          cd ios
-          pod install
-
-      - name: 🔨 Compile App (Default Architecture)
+      - name: 🔨 Compile App (No Code Signing)
+        # We invoke xcodebuild directly to bypass EAS demanding an Apple Developer account
         run: |
           set -o pipefail
           xcodebuild clean build \
