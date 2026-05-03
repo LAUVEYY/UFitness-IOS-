@@ -7,7 +7,7 @@ on:
   pull_request:
     branches:
       - main
-  workflow_dispatch: # Allows you to manually trigger the build from GitHub
+  workflow_dispatch:
 
 jobs:
   build-ios:
@@ -28,30 +28,28 @@ jobs:
         run: npm install
 
       - name: 🏗️ Generate Native iOS Project (Liquid Glass Linking)
-        # The --clean flag is critical. It forces Expo to completely rebuild 
-        # the ios folder, ensuring the unstable-native-tabs are perfectly linked.
         run: npx expo prebuild --platform ios --clean
 
       - name: 🔗 Install CocoaPods
-        # Links all the native libraries required for the UI and sensors
         run: |
           cd ios
           pod install
 
       - name: 🔨 Compile App (No Code Signing)
-        # Directly invokes Xcode to build for real iPhones (iphoneos) while forcefully disabling signing
         run: |
-          xcodebuild -workspace ios/UFitness.xcworkspace \
+          xcodebuild clean build \
+            -workspace ios/UFitness.xcworkspace \
             -scheme UFitness \
             -configuration Release \
             -sdk iphoneos \
+            -destination "generic/platform=iOS" \
             -derivedDataPath ./build \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY=""
+            CODE_SIGN_IDENTITY="" \
+            COMPILER_INDEX_STORE_ENABLE=NO
 
       - name: 📦 Package into IPA for Sideloadly
-        # Sideloadly needs an .ipa file (which is just a zipped folder named 'Payload' containing the .app)
         run: |
           mkdir -p Payload
           mv ./build/Build/Products/Release-iphoneos/UFitness.app Payload/
