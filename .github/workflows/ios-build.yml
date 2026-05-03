@@ -36,7 +36,10 @@ jobs:
           pod install
 
       - name: 🔨 Compile App (No Code Signing)
+        # We use pipefail so if xcodebuild fails, the step fails.
+        # We pipe the output to 'tee' so you can watch it live AND save it to xcodebuild.log
         run: |
+          set -o pipefail
           xcodebuild clean build \
             -workspace ios/UFitness.xcworkspace \
             -scheme UFitness \
@@ -47,7 +50,16 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
-            COMPILER_INDEX_STORE_ENABLE=NO
+            COMPILER_INDEX_STORE_ENABLE=NO | tee xcodebuild.log
+
+      - name: 🚨 Upload Error Logs
+        # 'always()' ensures this runs even if the compile step above crashes!
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xcodebuild-error-logs
+          path: xcodebuild.log
+          retention-days: 7
 
       - name: 📦 Package into IPA for Sideloadly
         run: |
