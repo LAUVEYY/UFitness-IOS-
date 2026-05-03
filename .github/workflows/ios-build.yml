@@ -38,7 +38,8 @@ jobs:
           cd ios
           pod install --repo-update
 
-      - name: 🔨 Compile App (No Code Signing)
+      - name: 🔨 Compile App (Using Default DerivedData)
+        # Removing the directory overrides fixes the RCTSwiftUI module map crash
         run: |
           set -o pipefail
           xcodebuild clean build \
@@ -50,13 +51,15 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
-            COMPILER_INDEX_STORE_ENABLE=NO \
-            CONFIGURATION_BUILD_DIR="$(pwd)/build_output" | xcbeautify
+            COMPILER_INDEX_STORE_ENABLE=NO | xcbeautify
 
       - name: 📦 Package into IPA for Sideloadly
         run: |
           mkdir -p Payload
-          mv ./build_output/UFitness.app Payload/
+          # Dynamically locate the built .app file in Xcode's default system folder
+          APP_PATH=$(find ~/Library/Developer/Xcode/DerivedData -name "UFitness.app" -type d | head -n 1)
+          echo "Found compiled app at: $APP_PATH"
+          mv "$APP_PATH" Payload/
           zip -r UFitness.ipa Payload
 
       - name: 📤 Upload IPA Artifact
