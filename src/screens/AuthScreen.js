@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   View, Text, StyleSheet, TextInput, TouchableOpacity, 
   KeyboardAvoidingView, Platform, ActivityIndicator, 
@@ -10,7 +10,11 @@ import { useUser } from '../context/UserContext';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-// Enable LayoutAnimation for Android
+import { GoogleSignin, statusCodes } from '@react-native-google-signin/google-signin';
+import { GoogleAuthProvider, signInWithCredential } from 'firebase/auth';
+import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { auth, db } from '../config/firebase'; 
+
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
 }
@@ -25,23 +29,95 @@ const AuthScreen = () => {
   const inputPlaceholder = isDark ? '#8E8E93' : '#AEAEB2';
   const accent = '#FF3B30';
 
-  const { login, register } = useUser();
+  const { login, register, loginWithGoogle } = useUser();
   const [isLogin, setIsLogin] = useState(true);
   const [loading, setLoading] = useState(false);
 
-  // Form State
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
-  
-  // Tracks fields with errors (empty or invalid) for red highlighting
   const [errorFields, setErrorFields] = useState([]); 
 
-  const handleGooglePress = () => {
-    Alert.alert(
-      "Google Sign-In Disabled", 
-      "Google Sign-In is temporarily disabled while running in Expo Go to prevent native module crashes. Please use Email/Password to test the app."
-    );
+  useEffect(() => {
+    console.log("[AuthScreen] Configuring Google Sign In...");
+    GoogleSignin.configure({
+      webClientId: '779129847304-oacdsfob6u492ba658ho6mj5u587jpva.apps.googleusercontent.com', 
+      offlineAccess: false, // Turned off to prevent stale offline token requests
+    });
+    console.log("[AuthScreen] Configuration complete.");
+  }, []);
+
+  const handleGooglePress = async () => {
+    console.log("\n=== STARTING GOOGLE SIGN IN ===");
+    try {
+      setLoading(true);
+      
+      console.log("[1] Checking Play Services...");
+      await GoogleSignin.hasPlayServices();
+      
+      console.log("[2] Forcibly wiping any stale sessions...");
+      try {
+        // Blindly attempt to nuke the cache regardless of previous sign-in status
+        await GoogleSignin.revokeAccess();
+        await GoogleSignin.signOut();
+        console.log("[2a] Cache wiped successfully.");
+      } catch (clearSessionError) {
+        console.log("[2b] Cache wipe skipped (No active session to clear).");
+      }
+
+      console.log("[3] Triggering Google UI...");
+      const response = await GoogleSignin.signIn();
+      console.log("[3a] Google UI Success. Extracting Token...");
+      
+      const idToken = response.data?.idToken || response.idToken;
+      if (!idToken) throw new Error("No ID token returned from Google");
+
+      console.log("[4] Authenticating with Firebase...");
+      const credential = GoogleAuthProvider.credential(idToken);
+      const userCredential = await signInWithCredential(auth, credential);
+      const firebaseUser = userCredential.user;
+      
+      console.log(`[5] Firebase Auth Success for UID: ${firebaseUser.uid}. Checking database...`);
+
+      const userDocRef = doc(db, 'users', firebaseUser.uid);
+      const userDoc = await getDoc(userDocRef);
+      
+      if (!userDoc.exists()) {
+        console.log("[6] New user detected. Creating Firestore document...");
+        await setDoc(userDocRef, {
+          id: firebaseUser.uid,
+          email: firebaseUser.email,
+          name: firebaseUser.displayName || 'UFitness User',
+          profileImage: firebaseUser.photoURL || '',
+          stats: { steps: 0, caloriesBurnedTotal: 0 },
+          history: [],
+          createdAt: new Date().toISOString()
+        });
+      }
+      
+      // Update our local React context
+      await loginWithGoogle(idToken);
+      
+      console.log("=== GOOGLE SIGN IN FULLY COMPLETE ===");
+
+    } catch (error) {
+      console.log("\n!!! GOOGLE SIGN IN FAILED !!!");
+      console.log("Error Code:", error.code);
+      console.log("Error Message:", error.message);
+      console.log("Full Error Object:", JSON.stringify(error, null, 2));
+
+      if (error.code === statusCodes.SIGN_IN_CANCELLED) {
+        console.log("-> User cancelled the login flow.");
+      } else if (error.code === statusCodes.IN_PROGRESS) {
+        console.log("-> Login already in progress.");
+      } else if (error.code === statusCodes.PLAY_SERVICES_NOT_AVAILABLE) {
+        Alert.alert("Google Error", "Play Services is not available or outdated on this device.");
+      } else {
+        Alert.alert("Google Sign-In Error", `${error.code}\n${error.message}\nCheck terminal for full logs.`);
+      }
+    } finally {
+      setLoading(false);
+    }
   };
 
   const toggleAuthMode = () => {
@@ -60,7 +136,6 @@ const AuthScreen = () => {
   };
 
   const handleAuth = async () => {
-    // 1. Empty Field Validation
     const missing = [];
     if (!email) missing.push('email');
     if (!password) missing.push('password');
@@ -72,7 +147,6 @@ const AuthScreen = () => {
       return;
     }
 
-    // 2. Input Limit Validations (Applies to both Login and Register based on test cases)
     if (email.length > 254) {
       setErrorFields(['email']);
       Alert.alert("Email too long", "Email cannot exceed 254 characters.");
@@ -91,9 +165,7 @@ const AuthScreen = () => {
       return;
     }
 
-    // 3. Formatting & Security Validations (Registration Only)
     if (!isLogin) {
-      // Strict regex ensuring standard characters and a valid 2+ letter extension (.com, .org, .co.uk)
       const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
       if (!emailRegex.test(email)) {
         setErrorFields(['email']);
@@ -104,7 +176,6 @@ const AuthScreen = () => {
       const domain = email.split('@')[1]?.toLowerCase();
       const localPart = email.split('@')[0];
 
-      // Block known disposable/spam email providers
       const blockedDomains = [
         'mailinator.com', 'yopmail.com', 'tempmail.com', 
         '10minutemail.com', 'guerrillamail.com', 'trashmail.com'
@@ -116,16 +187,13 @@ const AuthScreen = () => {
         return;
       }
 
-      // Fake Gmail Detection
       if (domain === 'gmail.com') {
-        // Block alias trick (e.g. user+spam@gmail.com)
         if (localPart.includes('+')) {
           setErrorFields(['email']);
           Alert.alert("Invalid Gmail", "Gmail aliases (using '+') are not allowed for registration.");
           return;
         }
         
-        // Gmail rules: 6-30 characters, no starting/ending/consecutive periods
         const alphanumericPart = localPart.replace(/\./g, '');
         if (alphanumericPart.length < 6 || alphanumericPart.length > 30) {
           setErrorFields(['email']);
@@ -285,8 +353,14 @@ const AuthScreen = () => {
               onPress={handleGooglePress}
               disabled={loading}
             >
-              <Ionicons name="logo-google" size={20} color={isDark ? '#FFF' : '#000'} style={{ marginRight: 10 }} />
-              <Text style={[styles.googleText, { color: text }]}>Continue with Google</Text>
+              {loading ? (
+                <ActivityIndicator color={isDark ? '#FFF' : '#000'} />
+              ) : (
+                <>
+                  <Ionicons name="logo-google" size={20} color={isDark ? '#FFF' : '#000'} style={{ marginRight: 10 }} />
+                  <Text style={[styles.googleText, { color: text }]}>Continue with Google</Text>
+                </>
+              )}
             </TouchableOpacity>
 
           </View>

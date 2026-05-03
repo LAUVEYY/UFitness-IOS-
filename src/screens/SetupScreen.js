@@ -17,7 +17,8 @@ const SetupScreen = () => {
   const colors = PALETTE[theme];
   const styles = getStyles(theme, colors);
   
-  const { completeSetup, syncDefaultCalendar } = useUser();
+  // Destructure our new prompt function from UserContext
+  const { completeSetup, syncDefaultCalendar, promptHealthConnectPermissions } = useUser();
 
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(false);
@@ -32,7 +33,7 @@ const SetupScreen = () => {
   const [dob, setDob] = useState(new Date(2000, 0, 1));
   const [dateSelected, setDateSelected] = useState(false);
 
-  // Measurements State (Initialized with sensible defaults)
+  // Measurements State
   const [weight, setWeight] = useState(Platform.OS === 'ios' ? '70' : '');
   const [weightUnit, setWeightUnit] = useState('kg');
   
@@ -45,9 +46,12 @@ const SetupScreen = () => {
   const [stepGoal, setStepGoal] = useState('10000');
   const [hydrationGoal, setHydrationGoal] = useState('2500');
   const [hydrationUnit, setHydrationUnit] = useState('ml');
+  
+  // Permission States
   const [calendarSynced, setCalendarSynced] = useState(false);
+  const [healthSynced, setHealthSynced] = useState(false); // New state for Health Connect
 
-  // Refs for Auto-Focus (Android mainly)
+  // Refs for Auto-Focus
   const weightRef = useRef(null);
   const heightRef = useRef(null);
   const heightInRef = useRef(null);
@@ -117,7 +121,6 @@ const SetupScreen = () => {
 
       setStep(2);
     } else if (step === 2) {
-      // Validate Android numeric inputs before proceeding
       if (Platform.OS === 'android') {
         if (!weight || parseFloat(weight) <= 0 || parseFloat(weight) > 1000) {
           return Alert.alert("Invalid Weight", "Please enter a valid weight.");
@@ -147,30 +150,28 @@ const SetupScreen = () => {
     
     const age = dateSelected ? calculateAge(dob) : null;
     
-    // Format DOB properly to avoid T16... timezone artifacts
     const dobString = dateSelected 
       ? `${dob.getFullYear()}-${String(dob.getMonth() + 1).padStart(2, '0')}-${String(dob.getDate()).padStart(2, '0')}`
       : null;
     
-    // Base Metric Conversions (Always store DB as flat cm, kg, ml)
     let finalHeight = null;
     if (heightUnit === 'cm' && heightCm) {
       finalHeight = parseFloat(heightCm);
     } else if (heightUnit === 'ft' && (heightFt || heightIn)) {
       const totalInches = (parseInt(heightFt || '0') * 12) + parseInt(heightIn || '0');
-      finalHeight = Math.round(totalInches * 2.54); // Convert inches to cm
+      finalHeight = Math.round(totalInches * 2.54); 
     }
 
     let finalWeight = weight ? parseFloat(weight) : null;
     if (finalWeight && weightUnit === 'lbs') {
-      finalWeight = Math.round(finalWeight * 0.453592); // Convert lbs to kg
+      finalWeight = Math.round(finalWeight * 0.453592); 
     }
 
     let finalHydration = parseInt(hydrationGoal) || 2500;
     if (hydrationUnit === 'oz') {
-      finalHydration = Math.round(finalHydration * 29.5735); // Convert oz to ml
+      finalHydration = Math.round(finalHydration * 29.5735); 
     } else if (hydrationUnit === 'glasses') {
-      finalHydration = finalHydration * 250; // Convert glasses to ml (assuming 250ml/glass)
+      finalHydration = finalHydration * 250; 
     }
 
     const setupData = {
@@ -205,6 +206,17 @@ const SetupScreen = () => {
     }
   };
 
+  // --- NEW: Android Health Connect Request Handler ---
+  const handleSyncHealthConnect = async () => {
+    const success = await promptHealthConnectPermissions();
+    if (success) {
+      setHealthSynced(true);
+      Alert.alert("Connected!", "UFitness is now synced with Android Health Connect.");
+    } else {
+      Alert.alert("Connection Failed", "Could not connect to Health Connect. Ensure it is installed on your device.");
+    }
+  };
+
   // --- HELPER ARRAYS FOR PICKERS (iOS Only) ---
   const weightOptions = Array.from({ length: weightUnit === 'kg' ? 221 : 441 }, (_, i) => String(i + (weightUnit === 'kg' ? 30 : 60)));
   const cmOptions = Array.from({ length: 161 }, (_, i) => String(i + 90));
@@ -231,7 +243,7 @@ const SetupScreen = () => {
     let iconColor = colors.primary;
     if (step === 2) { iconName = 'body'; iconColor = '#FF9500'; } 
     if (step === 3) { iconName = 'flag'; iconColor = '#FFD60A'; } 
-    if (step === 4) { iconName = 'calendar'; iconColor = '#34C759'; } 
+    if (step === 4) { iconName = 'shield-checkmark'; iconColor = '#32D74B'; } 
     return (
       <View style={[styles.stepIconCircle, { backgroundColor: iconColor + '15', borderColor: iconColor + '30' }]}>
         <Ionicons name={iconName} size={28} color={iconColor} />
@@ -246,7 +258,7 @@ const SetupScreen = () => {
       return <DateTimePicker value={dob} mode="date" display="default" onChange={onDateChange} maximumDate={new Date()} />;
     }
 
-    if (Platform.OS === 'android') return null; // Android uses TextInputs for weight/height, no bottom sheet needed
+    if (Platform.OS === 'android') return null; 
 
     return (
       <View style={styles.pickerSheet}>
@@ -532,14 +544,43 @@ const SetupScreen = () => {
                 {/* STEP 4: PERMISSIONS */}
                 {step === 4 && (
                   <View style={styles.formSection}>
+                     
+                     {/* Calendar Sync Card */}
                      <TouchableOpacity 
-                       style={[styles.permCard, calendarSynced && { borderColor: '#34C759', backgroundColor: '#34C75910' }]}
+                       style={[styles.permCard, calendarSynced && { borderColor: '#34C759', backgroundColor: '#34C75910', marginBottom: 15 }]}
                        onPress={handleSyncCalendar} disabled={calendarSynced}
                      >
-                       <View style={[styles.iconBox, { backgroundColor: calendarSynced ? '#34C759' : colors.surface }]}><Ionicons name="calendar" size={28} color={calendarSynced ? "#FFF" : colors.text} /></View>
-                       <View style={{flex: 1, paddingHorizontal: 15}}><Text style={styles.permTitle}>Sync Calendar</Text><Text style={styles.permDesc}>Required to find "Smart Gaps" in your schedule.</Text></View>
-                       <View style={[styles.checkBox, calendarSynced && { backgroundColor: '#34C759', borderColor: '#34C759' }]}>{calendarSynced && <Ionicons name="checkmark" size={16} color="#FFF" />}</View>
+                       <View style={[styles.iconBox, { backgroundColor: calendarSynced ? '#34C759' : colors.surface }]}>
+                          <Ionicons name="calendar" size={28} color={calendarSynced ? "#FFF" : colors.text} />
+                       </View>
+                       <View style={{flex: 1, paddingHorizontal: 15}}>
+                          <Text style={styles.permTitle}>Sync Calendar</Text>
+                          <Text style={styles.permDesc}>Required to find "Smart Gaps" in your schedule.</Text>
+                       </View>
+                       <View style={[styles.checkBox, calendarSynced && { backgroundColor: '#34C759', borderColor: '#34C759' }]}>
+                          {calendarSynced && <Ionicons name="checkmark" size={16} color="#FFF" />}
+                       </View>
                      </TouchableOpacity>
+
+                     {/* Android Health Connect Card */}
+                     {Platform.OS === 'android' && (
+                       <TouchableOpacity 
+                         style={[styles.permCard, healthSynced && { borderColor: '#FF453A', backgroundColor: '#FF453A10' }]}
+                         onPress={handleSyncHealthConnect} disabled={healthSynced}
+                       >
+                         <View style={[styles.iconBox, { backgroundColor: healthSynced ? '#FF453A' : colors.surface }]}>
+                            <MaterialCommunityIcons name="heart-pulse" size={28} color={healthSynced ? "#FFF" : colors.text} />
+                         </View>
+                         <View style={{flex: 1, paddingHorizontal: 15}}>
+                            <Text style={styles.permTitle}>Health Connect</Text>
+                            <Text style={styles.permDesc}>Required to sync steps and workouts without draining battery.</Text>
+                         </View>
+                         <View style={[styles.checkBox, healthSynced && { backgroundColor: '#FF453A', borderColor: '#FF453A' }]}>
+                            {healthSynced && <Ionicons name="checkmark" size={16} color="#FFF" />}
+                         </View>
+                       </TouchableOpacity>
+                     )}
+
                   </View>
                 )}
 

@@ -1,0 +1,54 @@
+{
+  "project_info": {
+    "project_number": "779129847304",
+    "project_id": "ufitness-ddd60",
+    "storage_bucket": "ufitness-ddd60.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:779129847304:android:d777af6983feda5e305bbd",
+        "android_client_info": {
+          "package_name": "com.student.ufitness"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "779129847304-mhannevh35u3a8vbgonrio9te8pt8fte.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.student.ufitness",
+            "certificate_hash": "0bab347d05a2201b186723444c0bb462ab6f3913"
+          }
+        },
+        {
+          "client_id": "779129847304-oacdsfob6u492ba658ho6mj5u587jpva.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyATaU_BCV6R1zAwO4N57_6vFew-o2L5Isg"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "779129847304-acq9t8jg948b6lslr6jap2p77heui41p.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "779129847304-gir2q52dj21s43ea4b6j1pil1v8brel8.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.student.ufitness"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

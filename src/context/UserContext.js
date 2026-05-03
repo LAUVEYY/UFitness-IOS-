@@ -2,7 +2,18 @@ import React, { createContext, useState, useContext, useEffect, useRef } from 'r
 import { AppState, Platform } from 'react-native';
 import { Pedometer } from 'expo-sensors';
 import * as Calendar from 'expo-calendar';
+import * as Notifications from 'expo-notifications';
 import AsyncStorage from '@react-native-async-storage/async-storage'; 
+
+// --- NATIVE ANDROID HEALTH CONNECT ---
+import { 
+  initialize, 
+  requestPermission, 
+  readRecords,
+  insertRecords,
+  getGrantedPermissions
+} from 'react-native-health-connect';
+
 import { 
   onAuthStateChanged, 
   signOut, 
@@ -16,11 +27,22 @@ import {
   signInWithCredential,
   deleteUser 
 } from 'firebase/auth';
+
 import { 
   doc, onSnapshot, updateDoc, arrayUnion, setDoc, getDoc, 
   collection, query, orderBy, limit, getDocs, deleteDoc 
 } from 'firebase/firestore';
+
 import { auth, db } from '../config/firebase'; 
+
+// --- CONFIGURE NOTIFICATIONS ---
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowAlert: true,
+    shouldPlaySound: true,
+    shouldSetBadge: true, 
+  }),
+});
 
 // --- INITIAL STATE ---
 const INITIAL_USER_DATA = {
@@ -72,12 +94,15 @@ const INITIAL_USER_DATA = {
   },
 };
 
+const DEFENSIVE_RETRY_DELAY = 250; 
+
 export const UserContext = createContext();
 
 export const UserProvider = ({ children }) => {
   const [user, setUser] = useState(null);       
   const [userData, setUserData] = useState(INITIAL_USER_DATA); 
   const [loading, setLoading] = useState(true);
+  
   const unsubscribeSnapshot = useRef(null);
   const [pedometerSubscription, setPedometerSubscription] = useState(null);
   
@@ -85,6 +110,9 @@ export const UserProvider = ({ children }) => {
 
   const sessionStartSteps = useRef(0); 
   const currentSessionSteps = useRef(0); 
+  const lastSavedSteps = useRef(0);
+
+  const hcInitialized = useRef(false);
 
   // ============================================================
   // 1. HELPER FUNCTIONS & CONVERTERS
@@ -244,8 +272,10 @@ export const UserProvider = ({ children }) => {
         createdAt: new Date().toISOString(), 
         isSetupComplete: false 
       };
+      
       await setDoc(doc(db, 'users', uid), newUserData);
       setUserData(newUserData); 
+      
       return { success: true };
     } catch (error) { 
       return { success: false, error: error.message }; 
@@ -631,6 +661,55 @@ export const UserProvider = ({ children }) => {
     return gaps;
   };
 
+  const scheduleGapNotifications = async (gaps) => {
+    try {
+      if (Platform.OS === 'android') {
+        await Notifications.setNotificationChannelAsync('gaps', {
+          name: 'Fitness Windows',
+          importance: Notifications.AndroidImportance.MAX,
+          vibrationPattern: [0, 250, 250, 250],
+          lightColor: '#FF3B30',
+          sound: 'ping.wav', 
+        });
+      }
+
+      const { status: existingStatus } = await Notifications.getPermissionsAsync();
+      let finalStatus = existingStatus;
+      if (existingStatus !== 'granted') {
+        const { status } = await Notifications.requestPermissionsAsync();
+        finalStatus = status;
+      }
+      
+      if (finalStatus !== 'granted') return;
+
+      await Notifications.cancelAllScheduledNotificationsAsync();
+
+      const now = Date.now();
+      const upcomingGaps = gaps.filter(g => g.type === 'gap' && (g.rawStart - 5 * 60000) > now);
+
+      for (let i = 0; i < Math.min(upcomingGaps.length, 20); i++) {
+        const gap = upcomingGaps[i];
+        const triggerTime = new Date(gap.rawStart - 5 * 60000); 
+
+        await Notifications.scheduleNotificationAsync({
+          content: {
+            title: "Fitness Window Approaching",
+            body: `You have a ${gap.duration} gap starting in 5 minutes. Time for a quick ${gap.suggestion}?`,
+            data: { gapId: gap.id },
+            sound: 'ping.wav',
+            badge: 1, 
+          },
+          trigger: { 
+            date: triggerTime,
+            channelId: 'gaps' 
+          },
+        });
+      }
+    } catch (e) {
+      console.log("Failed to schedule notifications:", e);
+    }
+  };
+
   const syncDefaultCalendar = async () => {
     if (!user) return false;
     
@@ -649,31 +728,37 @@ export const UserProvider = ({ children }) => {
         end.setDate(end.getDate() + 365); 
         end.setHours(23,59,59,999);
         
-        const events = await Calendar.getEventsAsync(calendarIds, start, end);
-        
-        const deviceEvents = events.filter(e => {
-            const note = e.notes || e.description || ''; 
-            return !note.includes('Added via UFitness Schedule');
-          }).map((e, i) => {
-            const s = new Date(e.startDate); 
-            const en = new Date(e.endDate); 
-            const durMins = Math.round((en - s) / 60000);
-            
-            return {
-              id: `local_${i}_${e.id}`, 
-              dateString: getLocalDateString(s), 
-              day: s.getDate().toString(),
-              title: e.title || 'Event', 
-              rawStart: s.getTime(), 
-              rawEnd: en.getTime(),
-              startTime: s.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
-              endTime: en.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
-              type: 'class', 
-              duration: formatDuration(durMins), 
-              color: e.calendarColor || '#555' 
-            };
-          });
-          
+        // FIX: Replaced console log with silent catch for no-events boundary crash
+        let deviceEvents = [];
+        if (calendarIds && calendarIds.length > 0) {
+            try {
+                const events = await Calendar.getEventsAsync(calendarIds, start, end);
+                deviceEvents = events.filter(e => {
+                    const note = e.notes || e.description || ''; 
+                    return !note.includes('Added via UFitness Schedule');
+                }).map((e, i) => {
+                    const s = new Date(e.startDate); 
+                    const en = new Date(e.endDate); 
+                    const durMins = Math.round((en - s) / 60000);
+                    
+                    return {
+                    id: `local_${i}_${e.id}`, 
+                    dateString: getLocalDateString(s), 
+                    day: s.getDate().toString(),
+                    title: e.title || 'Event', 
+                    rawStart: s.getTime(), 
+                    rawEnd: en.getTime(),
+                    startTime: s.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
+                    endTime: en.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
+                    type: 'class', 
+                    duration: formatDuration(durMins), 
+                    color: e.calendarColor || '#555' 
+                    };
+                });
+            } catch (err) {
+                // Silenced Calendar Fetch Error
+            }
+        }
         busyEvents = [...busyEvents, ...deviceEvents];
       }
       
@@ -709,6 +794,11 @@ export const UserProvider = ({ children }) => {
       const fullSchedule = [...busyEvents, ...gaps].sort((a, b) => a.rawStart - b.rawStart);
       
       await updateDoc(doc(db, 'users', user.uid), { schedule: fullSchedule });
+
+      if (userData?.preferences?.pushNotifications) {
+         await scheduleGapNotifications(gaps);
+      }
+
       return true;
       
     } catch (e) { 
@@ -801,7 +891,7 @@ export const UserProvider = ({ children }) => {
   };
 
   // ============================================================
-  // 7. STATS & PEDOMETER LOGIC 
+  // 7. STATS & OS NATIVE LOGIC 
   // ============================================================
 
   const calculateStats = (history = [], currentStats) => {
@@ -884,59 +974,74 @@ export const UserProvider = ({ children }) => {
     };
   };
 
+  const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+  const safeInitHealthConnect = async () => {
+    if (Platform.OS !== 'android') return false;
+    if (hcInitialized.current) return true;
+    
+    try {
+      const res = await initialize();
+      hcInitialized.current = res; 
+      return res;
+    } catch (error) {
+      console.log("Health Connect Initialization Error:", error);
+      return false;
+    }
+  };
+
   const refreshData = async () => {
     try {
-      const isAvailable = await Pedometer.isAvailableAsync();
-      
-      if (isAvailable && Platform.OS === 'ios') {
-        const start = new Date(); 
-        start.setHours(0,0,0,0); 
-        
-        const end = new Date();
-        const result = await Pedometer.getStepCountAsync(start, end);
-        
-        const newSteps = result.steps;
-        setUserData(prev => ({ ...prev, stats: { ...prev.stats, steps: newSteps } }));
-        
-        sessionStartSteps.current = newSteps; 
-        currentSessionSteps.current = 0;
-        
-        if (user) {
-          try { await updateDoc(doc(db, 'users', user.uid), { "stats.steps": newSteps }); } catch (e) {}
+      if (Platform.OS === 'ios') {
+        const isAvailable = await Pedometer.isAvailableAsync();
+        if (isAvailable) {
+          const start = new Date(); 
+          start.setHours(0,0,0,0); 
+          const end = new Date();
+          const result = await Pedometer.getStepCountAsync(start, end);
+          const newSteps = result.steps;
           
+          setUserData(prev => ({ ...prev, stats: { ...prev.stats, steps: newSteps } }));
+          sessionStartSteps.current = newSteps; 
+          currentSessionSteps.current = 0;
+          
+          if (user) {
+            try { await updateDoc(doc(db, 'users', user.uid), { "stats.steps": newSteps }); } catch (e) {}
+          }
+        }
+      } else if (Platform.OS === 'android') {
+        const isInitialized = await safeInitHealthConnect();
+        
+        if (isInitialized) {
           try {
-             const pastEntries = []; 
-             const userDoc = await getDoc(doc(db, 'users', user.uid));
-             
-             if (userDoc.exists()) {
-                const currentHistory = userDoc.data().history || []; 
-                const existingDates = currentHistory.filter(h => h.type === 'steps').map(h => getLocalDateString(h.date));
-                
-                for (let i = 1; i <= 7; i++) {
-                   const dStart = new Date(); 
-                   dStart.setDate(dStart.getDate() - i); 
-                   dStart.setHours(0,0,0,0); 
-                   
-                   const dateStr = getLocalDateString(dStart);
-                   
-                   if (!existingDates.includes(dateStr)) {
-                       const dEnd = new Date(dStart); 
-                       dEnd.setHours(23,59,59,999); 
-                       
-                       const pastRes = await Pedometer.getStepCountAsync(dStart, dEnd);
-                       
-                       if (pastRes.steps > 0) {
-                         pastEntries.push({ type: 'steps', value: pastRes.steps, date: dStart.toISOString() });
-                       }
-                   }
-                }
-                
-                if (pastEntries.length > 0) {
-                  await updateDoc(doc(db, 'users', user.uid), { history: arrayUnion(...pastEntries) });
-                }
+            const granted = await getGrantedPermissions();
+            const hasStepsPerm = granted.some(p => p.recordType === 'Steps' && p.accessType === 'read');
+
+            if (hasStepsPerm) {
+              const startOfDay = new Date();
+              startOfDay.setHours(0, 0, 0, 0);
+              const endOfDay = new Date();
+
+              const result = await readRecords('Steps', {
+                timeRangeFilter: { operator: 'between', startTime: startOfDay.toISOString(), endTime: endOfDay.toISOString() },
+              });
+
+              const totalStepsToday = result.records.reduce((sum, record) => sum + record.count, 0);
+
+              setUserData(prev => ({ ...prev, stats: { ...prev.stats, steps: totalStepsToday } }));
+
+              if (user) {
+                try { await updateDoc(doc(db, 'users', user.uid), { "stats.steps": totalStepsToday }); } catch (e) {}
+              }
+            } else {
+              console.log("Health Connect: Permission not granted yet. Skipping auto-fetch to prevent boot crash.");
+            }
+          } catch(err) {
+             // FIX: Ignore the Android 14 strict SecurityException to avoid console spam. 
+             // If they blocked cross-app reads, we just skip local cache parsing.
+             if (!err.message?.includes('SecurityException')) {
+                console.log("Health Connect Sync Error:", err.message);
              }
-          } catch (backfillErr) {
-            console.log("Backfill error:", backfillErr);
           }
         }
       }
@@ -951,47 +1056,76 @@ export const UserProvider = ({ children }) => {
 
   const startPedometer = async () => {
     try {
-      const { status } = await Pedometer.requestPermissionsAsync(); 
-      if (status !== 'granted') return;
-      
-      sessionStartSteps.current = userData?.stats?.steps || 0;
-      
-      if (pedometerSubscription) {
-        pedometerSubscription.remove();
-      }
-      
-      const sub = Pedometer.watchStepCount((result) => {
-        currentSessionSteps.current = result.steps; 
-        const totalSteps = sessionStartSteps.current + currentSessionSteps.current;
+      if (Platform.OS === 'ios') {
+        const { status } = await Pedometer.requestPermissionsAsync(); 
+        if (status !== 'granted') return;
         
-        setUserData(prev => ({ 
-          ...prev, 
-          stats: { ...prev.stats, steps: totalSteps } 
-        }));
-      });
-      
-      setPedometerSubscription(sub);
+        sessionStartSteps.current = userData?.stats?.steps || 0;
+        if (pedometerSubscription) pedometerSubscription.remove();
+        
+        const sub = Pedometer.watchStepCount((result) => {
+          currentSessionSteps.current = result.steps; 
+          const totalSteps = sessionStartSteps.current + currentSessionSteps.current;
+          setUserData(prev => ({ ...prev, stats: { ...prev.stats, steps: totalSteps } }));
+        });
+        setPedometerSubscription(sub);
+      } else {
+        await refreshData();
+      }
     } catch (e) { 
       console.log("Pedometer Permission Error:", e);
     }
   };
 
+  const promptHealthConnectPermissions = async () => {
+      if (Platform.OS !== 'android') return false;
+      try {
+          const isInitialized = await safeInitHealthConnect();
+          if (isInitialized) {
+              await requestPermission([
+                  { accessType: 'read', recordType: 'Steps' },
+                  { accessType: 'write', recordType: 'ActiveCaloriesBurned' }
+              ]);
+              await refreshData();
+              return true;
+          }
+      } catch (err) {
+          console.error("Manual Permission Request Failed:", err);
+          return false;
+      }
+  }
+
   const completeWorkout = async (dur, cal) => {
     if (!user) return;
     
-    const entry = { 
-      date: new Date().toISOString(), 
-      type: 'workout', 
-      duration: parseInt(dur), 
-      calories: parseInt(cal) 
-    };
-    
+    const entry = { date: new Date().toISOString(), type: 'workout', duration: parseInt(dur), calories: parseInt(cal) };
     const newHistory = [...(userData.history || []), entry]; 
     const newStats = calculateStats(newHistory, userData.stats);
     
     setUserData(prev => ({ ...prev, history: newHistory, stats: newStats }));
     
-    // OFFLINE FIX: Using try...catch so it gracefully queues the write locally without crashing
+    if (Platform.OS === 'android') {
+      try {
+        const isInitialized = await safeInitHealthConnect();
+        if (isInitialized) {
+          const granted = await getGrantedPermissions();
+          const hasCalPerm = granted.some(p => p.recordType === 'ActiveCaloriesBurned' && p.accessType === 'write');
+
+          if (hasCalPerm) {
+            const endTime = new Date();
+            const startTime = new Date(endTime.getTime() - (entry.duration * 60000));
+
+            await insertRecords([{
+              recordType: 'ActiveCaloriesBurned',
+              energy: { value: parseInt(cal), unit: 'kilocalories' },
+              startTime: startTime.toISOString(),
+              endTime: endTime.toISOString(),
+            }]);
+          }
+        }
+      } catch(hcError) { console.log("Health Connect Write Error:", hcError); }
+    }
+    
     try {
       await updateDoc(doc(db, 'users', user.uid), { 
         history: arrayUnion(entry), 
@@ -1009,65 +1143,41 @@ export const UserProvider = ({ children }) => {
 
   const addWater = async () => {
     if (!user) return;
-    
     const entry = { date: new Date().toISOString(), type: 'hydration', amount: 250 };
     const newHistory = [...(userData.history || []), entry]; 
     const newStats = calculateStats(newHistory, userData.stats);
-    
     setUserData(prev => ({ ...prev, history: newHistory, stats: newStats }));
     
-    // OFFLINE FIX: Using try...catch
     try {
-      await updateDoc(doc(db, 'users', user.uid), { 
-        history: arrayUnion(entry), 
-        "stats.hydrationCurrent": newStats.hydrationCurrent 
-      });
+      await updateDoc(doc(db, 'users', user.uid), { history: arrayUnion(entry), "stats.hydrationCurrent": newStats.hydrationCurrent });
     } catch(e) { console.log("Offline: Water cached locally."); }
   };
 
   const updateSteps = async (steps) => {
     if (!user) return;
-    try { 
-      await updateDoc(doc(db, 'users', user.uid), { 'stats.steps': steps }); 
-    } catch (e) {
-      console.log("Offline: Steps cached locally.");
-    }
+    try { await updateDoc(doc(db, 'users', user.uid), { 'stats.steps': steps }); } 
+    catch (e) { console.log("Offline: Steps cached locally."); }
   };
 
   const resetProgress = async () => { 
     if (!user) return;
-    
     const resetState = {
-      history: [], 
-      customEvents: [], 
-      "stats.hydrationCurrent": 0, 
-      "stats.streak": 0, 
-      "stats.bestStreak": 0,
-      "stats.caloriesBurnedTotal": 0, 
-      "stats.caloriesBurnedToday": 0, 
-      "stats.workoutsCompletedTotal": 0, 
-      "stats.workoutsCompletedToday": 0, 
-      "stats.minutes": 0, 
-      "stats.weeklyGoalCurrent": 0, 
-      "stats.steps": 0
+      history: [], customEvents: [], "stats.hydrationCurrent": 0, "stats.streak": 0, 
+      "stats.bestStreak": 0, "stats.caloriesBurnedTotal": 0, "stats.caloriesBurnedToday": 0, 
+      "stats.workoutsCompletedTotal": 0, "stats.workoutsCompletedToday": 0, "stats.minutes": 0, 
+      "stats.weeklyGoalCurrent": 0, "stats.steps": 0
     };
-    
     setUserData(prev => ({ ...prev, ...resetState }));
     
-    try {
-      await updateDoc(doc(db, 'users', user.uid), resetState); 
-    } catch(e) { console.log("Offline: Reset cached locally."); }
-    
-    sessionStartSteps.current = 0; 
-    currentSessionSteps.current = 0;
+    try { await updateDoc(doc(db, 'users', user.uid), resetState); } 
+    catch(e) { console.log("Offline: Reset cached locally."); }
+    sessionStartSteps.current = 0; currentSessionSteps.current = 0;
   };
 
   // ============================================================
   // 8. EFFECTS & LISTENERS
   // ============================================================
 
-  // --- NEW: BULLETPROOF OFFLINE CACHE SYNC ---
-  // Automatically saves your state to the phone ANY time a workout, water, or setting updates.
   useEffect(() => {
     if (user && userData && userData.isSetupComplete) {
       AsyncStorage.setItem(`@user_profile_${user.uid}`, JSON.stringify(userData)).catch(() => {});
@@ -1075,24 +1185,27 @@ export const UserProvider = ({ children }) => {
   }, [userData, user]);
 
   useEffect(() => {
+    Notifications.setBadgeCountAsync(0);
+
     const subscription = AppState.addEventListener('change', nextAppState => {
       if (appState.current.match(/inactive|background/) && nextAppState === 'active') { 
-        if (user && userData?.preferences?.isAutoSyncEnabled) {
-          syncDefaultCalendar(); 
-        }
+        Notifications.setBadgeCountAsync(0);
+        Notifications.dismissAllNotificationsAsync();
+
+        if (user && userData?.preferences?.isAutoSyncEnabled) syncDefaultCalendar(); 
+        if (Platform.OS === 'android' && user) refreshData(); 
       }
       appState.current = nextAppState;
     });
-    
-    const intervalId = setInterval(() => { 
-      if (user && userData?.preferences?.isAutoSyncEnabled) {
-        syncDefaultCalendar(); 
-      }
-    }, 60000); 
+
+    const responseListener = Notifications.addNotificationResponseReceivedListener(response => {
+      Notifications.setBadgeCountAsync(0);
+      Notifications.dismissAllNotificationsAsync();
+    });
     
     return () => { 
       subscription.remove(); 
-      clearInterval(intervalId); 
+      responseListener.remove();
     };
   }, [user, userData?.preferences?.isAutoSyncEnabled]);
 
@@ -1102,109 +1215,68 @@ export const UserProvider = ({ children }) => {
     const saveInterval = setInterval(async () => {
       const totalSteps = sessionStartSteps.current + currentSessionSteps.current;
       
-      if (totalSteps > sessionStartSteps.current) {
+      if (totalSteps > lastSavedSteps.current) {
          try { 
            await updateDoc(doc(db, 'users', user.uid), { "stats.steps": totalSteps }); 
-           sessionStartSteps.current = totalSteps; 
-           currentSessionSteps.current = 0; 
+           lastSavedSteps.current = totalSteps; 
          } catch(e) {}
       }
-    }, 10000); 
+    }, 60000); 
     
     return () => clearInterval(saveInterval);
   }, [user]);
 
-  // --- RESTORED OFFLINE CACHE, FAILSAFE, & RECONNECT MERGE ---
   useEffect(() => {
     const unsubscribeAuth = onAuthStateChanged(auth, async (currentUser) => {
       if (currentUser) {
-        setLoading(true); 
-        setUser(currentUser);
-        startPedometer(); 
-
+        setLoading(true); setUser(currentUser); startPedometer(); 
         const cacheKey = `@user_profile_${currentUser.uid}`;
         const failsafeTimer = setTimeout(() => { setLoading(false); }, 2500);
-
         let localCache = null;
 
-        // 1. INSTANT OFFLINE CACHE LOAD
         try {
           const cachedProfile = await AsyncStorage.getItem(cacheKey);
           if (cachedProfile) {
             localCache = JSON.parse(cachedProfile);
-            setUserData(localCache);
-            setLoading(false); // Unblocks Splash Screen Instantly!
-            clearTimeout(failsafeTimer); 
+            setUserData(localCache); setLoading(false); clearTimeout(failsafeTimer); 
           }
-        } catch (e) { 
-          console.log("Cache read error:", e); 
-        }
+        } catch (e) { console.log("Cache read error:", e); }
 
-        // 2. LIVE FIREBASE SYNC
-        unsubscribeSnapshot.current = onSnapshot(
-          doc(db, 'users', currentUser.uid), 
-          async (docSnap) => {
+        unsubscribeSnapshot.current = onSnapshot(doc(db, 'users', currentUser.uid), async (docSnap) => {
             if (docSnap.exists()) {
               let data = docSnap.data();
-              
-              // --- RACE CONDITION FIX ---
-              if (!data.email && currentUser.email) {
-                data.email = currentUser.email;
-              }
+              if (!data.email && currentUser.email) data.email = currentUser.email;
 
-              // --- OFFLINE SYNC RECOVERY ---
-              // If the phone's cache has more workout/water history than the server, 
-              // the user was active offline. We push the local data UP to Firebase!
               if (localCache && localCache.history && data.history && localCache.history.length > data.history.length) {
                 data = { ...localCache }; 
                 try { await setDoc(doc(db, 'users', currentUser.uid), localCache); } catch(e) {}
               }
               
-              // Recover steps if tracked offline
               if (localCache && localCache.stats && data.stats && localCache.stats.steps > data.stats.steps) {
                 data.stats.steps = localCache.stats.steps;
                 try { await updateDoc(doc(db, 'users', currentUser.uid), { "stats.steps": localCache.stats.steps }); } catch(e) {}
               }
 
               checkAndMigrateDailyStats(currentUser.uid, data);
-              
-              if (sessionStartSteps.current === 0 && (data.stats?.steps || 0) > 0) {
-                sessionStartSteps.current = data.stats.steps;
-              }
+              if (sessionStartSteps.current === 0 && (data.stats?.steps || 0) > 0) sessionStartSteps.current = data.stats.steps;
 
               const prefs = { ...INITIAL_USER_DATA.preferences, ...(data.preferences || {}) };
               const safeStats = calculateStats(data.history, data.stats || INITIAL_USER_DATA.stats);
               const finalData = { ...data, stats: safeStats, preferences: prefs };
               
-              setUserData(finalData);
-              localCache = finalData; // Update local reference so it doesn't infinitely sync
-
+              setUserData(finalData); localCache = finalData; 
             } else {
-              // --- MISSING DOCUMENT FIX (Offline Setup Screen Bug) ---
-              // If Firestore returns no document, but we have a completed setup in the cache,
-              // we are likely offline. DO NOT SHOW SETUP SCREEN. Trust the cache.
               if (localCache && localCache.isSetupComplete) {
-                setUserData(localCache);
-                try { await setDoc(doc(db, 'users', currentUser.uid), localCache); } catch(e) {}
+                setUserData(localCache); try { await setDoc(doc(db, 'users', currentUser.uid), localCache); } catch(e) {}
               } else {
-                const fallbackData = {
-                  ...INITIAL_USER_DATA,
-                  email: currentUser.email || '',
-                  name: currentUser.displayName || 'User',
-                  profileImage: currentUser.photoURL || null
-                };
+                const fallbackData = { ...INITIAL_USER_DATA, email: currentUser.email || '', name: currentUser.displayName || 'User', profileImage: currentUser.photoURL || null };
                 try { await setDoc(doc(db, 'users', currentUser.uid), fallbackData); } catch(e) {}
                 setUserData(fallbackData);
               }
             }
-            setLoading(false); 
-            clearTimeout(failsafeTimer);
+            setLoading(false); clearTimeout(failsafeTimer);
           },
-          (error) => {
-            console.log("Listener detached quietly or offline.");
-            setLoading(false); 
-            clearTimeout(failsafeTimer);
-          }
+          (error) => { setLoading(false); clearTimeout(failsafeTimer); }
         );
 
         return () => { 
@@ -1212,24 +1284,19 @@ export const UserProvider = ({ children }) => {
           if (pedometerSubscription) pedometerSubscription.remove(); 
           clearTimeout(failsafeTimer);
         };
-        
       } else { 
-        setUser(null);
-        setUserData(INITIAL_USER_DATA); 
-        setLoading(false); 
+        setUser(null); setUserData(INITIAL_USER_DATA); setLoading(false); 
       }
     });
-    
     return () => unsubscribeAuth();
   }, []);
 
   return (
     <UserContext.Provider value={{ 
-      user, userData, loading, 
-      login, register, logout, loginWithGoogle, completeSetup, deleteAccount, 
+      user, userData, loading, login, register, logout, loginWithGoogle, completeSetup, deleteAccount, 
       uploadProfileImage, updateName, updateUserPassword, updatePreferences, updateDailyGoals, updateBodyStats, updateDOB, 
       refreshData, syncDefaultCalendar, fetchLeaderboard, addCustomEvent, deleteCustomEvent, 
-      completeWorkout, addWater, updateSteps, resetProgress, converters 
+      completeWorkout, addWater, updateSteps, resetProgress, promptHealthConnectPermissions, converters 
     }}>
       {children}
     </UserContext.Provider>

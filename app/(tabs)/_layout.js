@@ -49,22 +49,29 @@ export default function TabsLayout() {
         tabBarStyle: [
           styles.tabBar,
           {
-            // FIX 1: Raised the iOS height back up slightly to find the perfect middle ground
             height: Platform.OS === 'ios' ? 78 : 72 + bottomInset, 
             paddingBottom: Platform.OS === 'ios' ? 20 : bottomInset + 16, 
             paddingTop: Platform.OS === 'ios' ? 5 : 0, 
-            backgroundColor: 'transparent', 
+            // FIX: Applied 85% opacity to Android for a "little transparency" without washing out
+            backgroundColor: Platform.OS === 'android' 
+              ? (theme === 'dark' ? 'rgba(28, 28, 30, 0.85)' : 'rgba(255, 255, 255, 0.85)') 
+              : 'transparent', 
           }
         ],
-        // Injects a solid Glass Blur View right behind the tabs on ALL platforms
         tabBarBackground: () => (
-          <BlurView
-            tint={theme === 'dark' ? 'dark' : 'light'}
-            // FIX 2: Cranked Android intensity from 45 to 85 so it is much less transparent
-            intensity={Platform.OS === 'ios' ? 80 : 85}
-            experimentalBlurMethod={Platform.OS === 'android' ? "dimezisBlurView" : 'none'} 
-            style={StyleSheet.absoluteFill}
-          />
+          Platform.OS === 'ios' ? (
+            <BlurView
+              tint={theme === 'dark' ? 'dark' : 'light'}
+              intensity={80}
+              style={StyleSheet.absoluteFill}
+            />
+          ) : (
+            // FIX: Applied 85% opacity to the Android background fallback
+            <View style={[
+              StyleSheet.absoluteFill, 
+              { backgroundColor: theme === 'dark' ? 'rgba(28, 28, 30, 0.81)' : 'rgba(255, 255, 255, 0.81)' }
+            ]} />
+          )
         ),
       }}
     >
@@ -85,7 +92,7 @@ export default function TabsLayout() {
       />
       <Tabs.Screen 
         name="compete" 
-        options={{ title: "Compete", tabBarIcon: ({ focused, color, size }) => renderIcon("trophy", focused, color, size) }}
+        options={{ title: "Compete", tabBarIcon: ({ focused, color, size }) => renderIcon("walk", focused, color, size) }}
         listeners={{ tabPress: () => Haptics.selectionAsync() }}
       />
       <Tabs.Screen 

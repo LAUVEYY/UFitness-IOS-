@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   View, Text, StyleSheet, TouchableOpacity, Switch, 
   useColorScheme, Modal, FlatList, TextInput, ScrollView, Alert, Platform, TouchableWithoutFeedback, Keyboard, KeyboardAvoidingView
@@ -10,6 +10,9 @@ import { Picker } from '@react-native-picker/picker';
 import { useRouter } from 'expo-router'; 
 import { useUser } from '../context/UserContext';
 import { PALETTE } from '../constants/theme';
+
+// NEW IMPORT: Needed to check if the Android switch should visually be "ON" 
+import { getGrantedPermissions } from 'react-native-health-connect';
 
 // --- PRE-MADE CONSTANTS ---
 const STEP_OPTIONS = [ 
@@ -71,13 +74,12 @@ const SettingsScreen = () => {
   const { 
     userData, logout, syncDefaultCalendar, updateDailyGoals, 
     updatePreferences, updateName, updateUserPassword, resetProgress, updateDOB,
-    converters, deleteAccount 
+    converters, deleteAccount, promptHealthConnectPermissions 
   } = useUser();
   
   const { name, dob, stats, preferences } = userData || {};
   const units = preferences?.units || { weight: 'kg', height: 'cm', volume: 'ml', energy: 'kcal' };
   
-  // Calculate active theme based on preferences (Override System if set)
   const displayMode = preferences?.displayMode || 'system';
   const theme = displayMode === 'system' ? systemTheme : displayMode;
   const colors = PALETTE[theme];
@@ -88,23 +90,41 @@ const SettingsScreen = () => {
   const [editType, setEditType] = useState(null); 
   const [activeBottomSheet, setActiveBottomSheet] = useState(null); 
   
-  // Validation State
   const [errorField, setErrorField] = useState(null);
   const [errorMessage, setErrorMessage] = useState('');
 
-  // Input State
   const [textInput, setTextInput] = useState('');
   const [currentPass, setCurrentPass] = useState('');
   const [newPass, setNewPass] = useState('');
 
-  // Date State
   const [tempDate, setTempDate] = useState(new Date());
 
-  // iOS Picker State
   const [tempStepGoal, setTempStepGoal] = useState('10000');
   const [tempHydrationGoal, setTempHydrationGoal] = useState('2500');
   const [tempUnit, setTempUnit] = useState(null);
   const [tempDisplayMode, setTempDisplayMode] = useState('system');
+
+  // NEW: State to visually toggle the Android Health Connect switch
+  const [isHealthConnectEnabled, setIsHealthConnectEnabled] = useState(false);
+
+  // --- EFFECTS ---
+  
+  // On load, silently check if Android permissions are already granted 
+  // so the switch initializes in the correct visual state.
+  useEffect(() => {
+    const checkHealthStatus = async () => {
+      if (Platform.OS === 'android') {
+        try {
+          const granted = await getGrantedPermissions();
+          const hasStepsPerm = granted.some(p => p.recordType === 'Steps' && p.accessType === 'read');
+          setIsHealthConnectEnabled(hasStepsPerm);
+        } catch (e) {
+          setIsHealthConnectEnabled(false);
+        }
+      }
+    };
+    checkHealthStatus();
+  }, []);
 
   // --- ACTIONS ---
   const calculateAge = (birthDate) => {
@@ -121,6 +141,27 @@ const SettingsScreen = () => {
       updatePreferences({ isAutoSyncEnabled: success }); 
     } else { 
       updatePreferences({ isAutoSyncEnabled: false }); 
+    }
+  };
+
+  // NEW: Action for the Android Health Connect Switch
+  const handleHealthConnectToggle = async (val) => {
+    if (val) {
+      // User turned the switch ON. Fire the dialog.
+      const success = await promptHealthConnectPermissions();
+      setIsHealthConnectEnabled(success);
+      if (success) {
+        Alert.alert("Synced!", "UFitness is now connected to Android Health Connect.");
+      }
+    } else {
+      // User turned the switch OFF. 
+      // Note: Android apps cannot programmatically "revoke" their own Health Connect permissions.
+      // The user MUST do it from their Android Settings app. We will alert them of this.
+      setIsHealthConnectEnabled(false);
+      Alert.alert(
+        "Permission Revocation", 
+        "To fully disconnect UFitness, please open your Android 'Settings' app, go to 'Health Connect', and remove UFitness from the connected apps list."
+      );
     }
   };
 
@@ -149,7 +190,6 @@ const SettingsScreen = () => {
     setErrorField(null);
     setErrorMessage('');
     
-    // UNITS
     if (['weight', 'height', 'volume', 'energy'].includes(type)) {
       if (Platform.OS === 'ios') {
         setTempUnit(units[type]);
@@ -160,7 +200,6 @@ const SettingsScreen = () => {
       return;
     }
 
-    // DISPLAY MODE
     if (type === 'displayMode') {
       if (Platform.OS === 'ios') {
         setTempDisplayMode(displayMode);
@@ -171,7 +210,6 @@ const SettingsScreen = () => {
       return;
     }
 
-    // Name & Password
     if (type === 'name') {
       setTextInput(name || '');
       setModalVisible(true);
@@ -184,7 +222,6 @@ const SettingsScreen = () => {
       return;
     }
 
-    // DOB
     if (type === 'dob') {
        if (dob) {
            const parts = dob.split('-');
@@ -196,7 +233,6 @@ const SettingsScreen = () => {
        return;
     }
 
-    // GOALS
     if (type === 'steps') {
         if (Platform.OS === 'ios') {
             setTempStepGoal(stats?.stepGoal?.toString() || '10000');
@@ -340,7 +376,6 @@ const SettingsScreen = () => {
 
   // --- RENDERERS ---
   const renderModalContent = () => {
-    // 1. UNITS LIST (Android Only)
     if (['weight', 'height', 'volume', 'energy'].includes(editType)) {
       return (
         <FlatList 
@@ -356,7 +391,6 @@ const SettingsScreen = () => {
       );
     }
 
-    // 2. DISPLAY MODE LIST (Android Only)
     if (editType === 'displayMode') {
       return (
         <FlatList 
@@ -372,7 +406,6 @@ const SettingsScreen = () => {
       );
     }
 
-    // 3. GOALS LIST (Android Only - Pre-made Options)
     if (editType === 'steps' || editType === 'hydration') {
        return <FlatList 
          data={editType === 'steps' ? STEP_OPTIONS : WATER_OPTIONS} 
@@ -396,7 +429,6 @@ const SettingsScreen = () => {
        }} />;
     }
     
-    // 4. PASSWORD INPUT (Both Platforms)
     if (editType === 'password') {
         return (
             <View>
@@ -433,7 +465,6 @@ const SettingsScreen = () => {
         );
     }
     
-    // 5. NAME INPUT (Both Platforms)
     return (
         <View>
             <TextInput 
@@ -476,21 +507,18 @@ const SettingsScreen = () => {
           </View>
         )}
 
-        {/* iOS Pickers for Units */}
         {['weight', 'height', 'volume', 'energy'].includes(activeBottomSheet) && (
           <Picker selectedValue={tempUnit} onValueChange={(val) => setTempUnit(val)} itemStyle={{ color: colors.text }}>
             {UNIT_OPTIONS[activeBottomSheet].map(opt => <Picker.Item key={opt.value} label={opt.label} value={opt.value} />)}
           </Picker>
         )}
 
-        {/* iOS Pickers for Display Mode */}
         {activeBottomSheet === 'displayMode' && (
           <Picker selectedValue={tempDisplayMode} onValueChange={(val) => setTempDisplayMode(val)} itemStyle={{ color: colors.text }}>
             {DISPLAY_OPTIONS.map(opt => <Picker.Item key={opt.value} label={opt.label} value={opt.value} />)}
           </Picker>
         )}
 
-        {/* iOS Pickers for Pre-made Goals */}
         {activeBottomSheet === 'steps' && (
           <Picker selectedValue={tempStepGoal} onValueChange={(val) => setTempStepGoal(val)} itemStyle={{ color: colors.text }}>
             {STEP_OPTIONS.map(opt => <Picker.Item key={opt.value.toString()} label={`${opt.label} (${opt.value.toLocaleString()} steps)`} value={opt.value.toString()} />)}
@@ -517,7 +545,6 @@ const SettingsScreen = () => {
       <TouchableWithoutFeedback onPress={() => { Keyboard.dismiss(); setActiveBottomSheet(null); }}>
         <View style={{flex: 1}}>
           
-          {/* HEADER */}
           <View style={styles.header}>
             <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
               <Ionicons name="chevron-back" size={24} color={colors.text} />
@@ -528,7 +555,6 @@ const SettingsScreen = () => {
 
           <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
             
-            {/* ACCOUNT GROUP */}
             <SectionHeader title="ACCOUNT" colors={colors} styles={styles} />
             <View style={styles.group}>
               <SettingRow icon="person" color="#007AFF" label="Name" value={name} onPress={() => openEdit('name')} theme={theme} colors={colors} styles={styles} />
@@ -536,12 +562,13 @@ const SettingsScreen = () => {
               <SettingRow icon="lock-closed" color="#FF2D55" label="Password" value="••••••" onPress={() => openEdit('password')} isLast theme={theme} colors={colors} styles={styles} />
             </View>
 
-            {/* PREFERENCES GROUP */}
             <SectionHeader title="PREFERENCES" colors={colors} styles={styles} />
             <View style={styles.group}>
+              
+              {/* iOS: Calendar Sync | Android: Calendar Sync + Health Connect */}
               <View style={[styles.row, { borderBottomWidth: 1, borderBottomColor: colors.border }]}>
                  <View style={[styles.iconContainer, { backgroundColor: '#34C75915' }]}>
-                    <Ionicons name="sync" size={20} color="#34C759" />
+                    <Ionicons name="calendar" size={20} color="#34C759" />
                  </View>
                  <View style={{ flex: 1 }}>
                    <Text style={[styles.rowLabel, { color: colors.text }]}>Calendar Sync</Text>
@@ -549,7 +576,20 @@ const SettingsScreen = () => {
                  </View>
                  <Switch value={preferences?.isAutoSyncEnabled} onValueChange={handleDeviceToggle} trackColor={{true: colors.primary}} />
               </View>
-              {/* DISPLAY MODE ROW */}
+
+              {Platform.OS === 'android' && (
+                <View style={[styles.row, { borderBottomWidth: 1, borderBottomColor: colors.border }]}>
+                   <View style={[styles.iconContainer, { backgroundColor: '#FF453A15' }]}>
+                      <MaterialCommunityIcons name="heart-pulse" size={20} color="#FF453A" />
+                   </View>
+                   <View style={{ flex: 1 }}>
+                     <Text style={[styles.rowLabel, { color: colors.text }]}>Health Connect</Text>
+                     <Text style={styles.rowSubLabel}>Sync Android steps natively</Text>
+                   </View>
+                   <Switch value={isHealthConnectEnabled} onValueChange={handleHealthConnectToggle} trackColor={{true: '#FF453A'}} />
+                </View>
+              )}
+
               <SettingRow 
                 icon="moon" 
                 color="#5E5CE6" 
@@ -561,14 +601,12 @@ const SettingsScreen = () => {
               />
             </View>
 
-            {/* GOALS GROUP */}
             <SectionHeader title="DAILY GOALS" colors={colors} styles={styles} />
             <View style={styles.group}>
               <SettingRow icon="walk" color="#5856D6" label="Step Goal" value={stats?.stepGoal?.toLocaleString()} onPress={() => openEdit('steps')} theme={theme} colors={colors} styles={styles} />
               <SettingRow icon="water" color="#0A84FF" label="Hydration Goal" value={converters.displayVolume(stats?.hydrationGoal)} onPress={() => openEdit('hydration')} isLast theme={theme} colors={colors} styles={styles} />
             </View>
 
-            {/* UNITS GROUP */}
             <SectionHeader title="UNITS OF MEASUREMENT" colors={colors} styles={styles} />
             <View style={styles.group}>
               <SettingRow icon="scale" color="#AF52DE" label="Weight" value={units.weight.toUpperCase()} onPress={() => openEdit('weight')} theme={theme} colors={colors} styles={styles} />
@@ -577,7 +615,6 @@ const SettingsScreen = () => {
               <SettingRow icon="flash" color="#FFCC00" label="Energy" value={units.energy.toUpperCase()} onPress={() => openEdit('energy')} isLast theme={theme} colors={colors} styles={styles} />
             </View>
 
-            {/* DANGER ZONE */}
             <SectionHeader title="DATA & PRIVACY" colors={colors} styles={styles} />
             <View style={styles.group}>
               <TouchableOpacity style={[styles.row, { borderBottomWidth: 1, borderBottomColor: colors.border }]} onPress={() => Alert.alert("Reset Progress?", "This action cannot be undone.", [{ text: "Cancel", style: 'cancel' }, { text: "Reset", style: 'destructive', onPress: resetProgress }])}>
@@ -602,7 +639,6 @@ const SettingsScreen = () => {
         </View>
       </TouchableWithoutFeedback>
 
-      {/* GLOBAL MODAL (For Android Goals/Units, Names, Passwords, Display Mode) */}
       <Modal transparent visible={modalVisible} animationType="fade" onRequestClose={() => { setModalVisible(false); setErrorField(null); setErrorMessage(''); }}>
         <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={() => { setModalVisible(false); setErrorField(null); setErrorMessage(''); }}>
             <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{width: '100%'}}>
@@ -617,7 +653,6 @@ const SettingsScreen = () => {
         </TouchableOpacity>
       </Modal>
 
-      {/* IOS BOTTOM SHEET */}
       {renderBottomPickerSheet()}
 
     </SafeAreaView>

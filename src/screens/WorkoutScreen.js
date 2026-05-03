@@ -14,6 +14,16 @@ import { useAudioPlayer } from 'expo-audio';
 import * as ScreenOrientation from 'expo-screen-orientation';
 import { BlurView } from 'expo-blur';
 
+// --- PERFORMANCE FIX: Smart Glass Container ---
+// iOS gets native blur, Android gets an ultra-fast transparent fallback
+const GlassContainer = ({ intensity, tint, style, children }) => {
+  if (Platform.OS === 'ios') {
+    return <BlurView intensity={intensity} tint={tint} style={style}>{children}</BlurView>;
+  }
+  const bgColor = tint === 'light' ? 'rgba(255, 255, 255, 0.85)' : 'rgba(0, 0, 0, 0.75)';
+  return <View style={[style, { backgroundColor: bgColor }]}>{children}</View>;
+};
+
 const CATEGORIES = ["All", "Micro", "HIIT", "Strength", "Cardio", "Core"];
 const REST_SECONDS = 15; 
 
@@ -51,47 +61,107 @@ const WorkoutScreen = () => {
   const [timeLeft, setTimeLeft] = useState(0);
   const [isResting, setIsResting] = useState(false);
 
-  const player = useAudioPlayer(require('../../assets/sounds/ding.mp3'));
+  const player = useAudioPlayer(require('../../assets/sounds/ping.mp3'));
 
-  // --- UPGRADED MIX & MATCH ENGINE ---
+  // --- UPGRADED MIX & MATCH ENGINE (16 Workouts, 10+ Exercises Each) ---
   useEffect(() => {
     const generateMixedWorkouts = () => {
       return [
         {
-          id: 'w1', title: 'Daily HIIT Burn', category: 'HIIT', duration: '12 min', cal: '150', level: 'Intermediate', smallSpace: false,
+          id: 'w1', title: 'Daily HIIT Burn', category: 'HIIT', duration: '20 min', cal: '250', level: 'Intermediate', smallSpace: false,
           image: 'https://images.unsplash.com/photo-1601422407692-ec4eeec1d9b3?q=80&w=600',
-          description: 'A high-intensity interval training session designed to spike your heart rate and maximize calorie burn in minimal time.',
-          exercises: shuffleArray([...getEx('cardio', 3), ...getEx('core', 2)])
+          description: 'A high-intensity interval training session designed to spike your heart rate and maximize calorie burn.',
+          exercises: shuffleArray([...getEx('cardio', 6), ...getEx('core', 4)])
         },
         {
-          id: 'w2', title: 'Dorm Core Crusher', category: 'Core', duration: '8 min', cal: '80', level: 'Beginner', smallSpace: true,
+          id: 'w2', title: 'Dorm Core Crusher', category: 'Core', duration: '15 min', cal: '120', level: 'Beginner', smallSpace: true,
           image: 'https://images.unsplash.com/photo-1571019614242-c5c5dee9f50b?q=80&w=600',
           description: 'Silent but deadly. Sculpt your abs and obliques without making a sound or leaving your room.',
-          exercises: getEx('core', 5)
+          exercises: getEx('core', 10)
         },
         {
-          id: 'w3', title: 'Full Body Strength', category: 'Strength', duration: '15 min', cal: '120', level: 'Advanced', smallSpace: false,
+          id: 'w3', title: 'Full Body Strength', category: 'Strength', duration: '25 min', cal: '200', level: 'Advanced', smallSpace: false,
           image: 'https://images.unsplash.com/photo-1581009146145-b5ef050c2e1e?q=80&w=600',
           description: 'Build functional strength across all major muscle groups. No equipment needed, just pure bodyweight resistance.',
-          exercises: shuffleArray([...getEx('upper', 2), ...getEx('lower', 3), ...getEx('core', 1)])
+          exercises: shuffleArray([...getEx('upper', 4), ...getEx('lower', 4), ...getEx('core', 2)])
         },
         {
-          id: 'w4', title: 'Morning Mobility', category: 'Micro', duration: '5 min', cal: '30', level: 'Beginner', smallSpace: true,
+          id: 'w4', title: 'Morning Mobility', category: 'Micro', duration: '10 min', cal: '60', level: 'Beginner', smallSpace: true,
           image: 'https://images.unsplash.com/photo-1538805060514-97d9cc17730c?q=80&w=600',
           description: 'Start your day right. Gentle stretches and movements to wake up your joints, improve posture, and get the blood flowing.',
-          exercises: getEx('flexibility', 3) 
+          exercises: getEx('flexibility', 10) 
         },
         {
-          id: 'w5', title: 'Lower Body Burn', category: 'Strength', duration: '10 min', cal: '110', level: 'Intermediate', smallSpace: false,
+          id: 'w5', title: 'Lower Body Burn', category: 'Strength', duration: '20 min', cal: '180', level: 'Intermediate', smallSpace: false,
           image: 'https://images.unsplash.com/photo-1434682881908-b43d0467b798?q=80&w=600',
           description: 'Target your glutes, quads, and hamstrings with this explosive lower body routine. Get ready to feel the burn.',
-          exercises: getEx('lower', 4)
+          exercises: getEx('lower', 10)
         },
         {
-          id: 'w6', title: 'Cardio Blast', category: 'Cardio', duration: '10 min', cal: '130', level: 'Advanced', smallSpace: true,
+          id: 'w6', title: 'Cardio Blast', category: 'Cardio', duration: '15 min', cal: '190', level: 'Advanced', smallSpace: true,
           image: 'https://images.unsplash.com/photo-1583454110551-21f2fa2afe61?q=80&w=600',
           description: 'Keep your heart rate in the red zone. Constant movement designed to build stamina and endurance quickly.',
-          exercises: getEx('cardio', 4) 
+          exercises: getEx('cardio', 10) 
+        },
+        {
+          id: 'w7', title: 'Sweat & Sculpt', category: 'HIIT', duration: '25 min', cal: '300', level: 'Advanced', smallSpace: false,
+          image: 'https://images.unsplash.com/photo-1517836357463-d25dfeac3438?q=80&w=600',
+          description: 'A massive full-body calorie burner combining fast-paced cardio bursts with targeted core sculpting.',
+          exercises: shuffleArray([...getEx('cardio', 6), ...getEx('core', 5)])
+        },
+        {
+          id: 'w8', title: 'Upper Body Pump', category: 'Strength', duration: '18 min', cal: '150', level: 'Intermediate', smallSpace: true,
+          image: 'https://images.unsplash.com/photo-1581009137042-c552e485697a?q=80&w=600',
+          description: 'Focus purely on your arms, chest, and back. Slow, controlled movements for maximum muscle tension.',
+          exercises: getEx('upper', 10)
+        },
+        {
+          id: 'w9', title: 'Abs of Steel', category: 'Core', duration: '12 min', cal: '100', level: 'Intermediate', smallSpace: true,
+          image: 'https://images.unsplash.com/photo-1541534741688-6078c6bfb5c5?q=80&w=600',
+          description: 'An intense, rapid-fire abdominal routine that leaves zero time for rest.',
+          exercises: getEx('core', 12)
+        },
+        {
+          id: 'w10', title: 'Full Body Flow', category: 'Micro', duration: '12 min', cal: '75', level: 'Beginner', smallSpace: true,
+          image: 'https://images.unsplash.com/photo-1544367567-0f2fcb009e0b?q=80&w=600',
+          description: 'A fast and effective 10-exercise mobility flow to loosen up stiff muscles between study sessions.',
+          exercises: getEx('flexibility', 10)
+        },
+        {
+          id: 'w11', title: 'Glute & Leg Fire', category: 'Strength', duration: '22 min', cal: '210', level: 'Advanced', smallSpace: false,
+          image: 'https://images.unsplash.com/photo-1574680096145-d05b474e2155?q=80&w=600',
+          description: 'Build serious lower body power with squats, lunges, and plyometric jumps.',
+          exercises: shuffleArray([...getEx('lower', 8), ...getEx('core', 3)])
+        },
+        {
+          id: 'w12', title: 'Endurance Builder', category: 'Cardio', duration: '30 min', cal: '350', level: 'Advanced', smallSpace: false,
+          image: 'https://images.unsplash.com/photo-1552674605-db6ffd4facb5?q=80&w=600',
+          description: 'A non-stop, high-endurance cardio circuit designed to test your cardiovascular limits.',
+          exercises: getEx('cardio', 12)
+        },
+        {
+          id: 'w13', title: 'Silent Shred', category: 'HIIT', duration: '18 min', cal: '200', level: 'Intermediate', smallSpace: true,
+          image: 'https://images.unsplash.com/photo-1576678927484-cc907957088c?q=80&w=600',
+          description: 'Zero jumping, zero noise, but maximum intensity. Perfect for late nights or upstairs apartments.',
+          exercises: shuffleArray([...getEx('upper', 4), ...getEx('lower', 4), ...getEx('core', 4)])
+        },
+        {
+          id: 'w14', title: 'Evening Unwind', category: 'Micro', duration: '15 min', cal: '50', level: 'Beginner', smallSpace: true,
+          image: 'https://images.unsplash.com/photo-1506126613408-eca07ce68773?q=80&w=600',
+          description: 'A deeply relaxing, breath-focused stretching flow to bring your heart rate down before bed.',
+          exercises: getEx('flexibility', 10)
+        },
+        {
+          id: 'w15', title: 'Oblique Obliterator', category: 'Core', duration: '14 min', cal: '110', level: 'Advanced', smallSpace: true,
+          image: 'https://images.unsplash.com/photo-1518611012118-696072aa579a?q=80&w=600',
+          description: 'Target the sides of your core to build stability, improve posture, and strengthen your obliques.',
+          exercises: getEx('core', 11)
+        },
+        {
+          id: 'w16', title: 'Spartan Strength', category: 'Strength', duration: '35 min', cal: '380', level: 'Advanced', smallSpace: false,
+          image: 'https://images.unsplash.com/photo-1534438327276-14e5300c3a48?q=80&w=600',
+          description: 'The ultimate bodyweight strength test. Push yourself to failure with this grueling full-body circuit.',
+          exercises: shuffleArray([...getEx('upper', 5), ...getEx('lower', 5), ...getEx('core', 2)])
         }
       ];
     };
@@ -183,7 +253,6 @@ const WorkoutScreen = () => {
     return matchesSearch && matchesCategory && matchesQuick;
   });
 
-  // --- PLAYER MODAL ---
   const renderPlayerModal = () => {
     if (!activeSession) return null;
     const currentEx = activeSession.exercises[currentExIndex];
@@ -297,9 +366,6 @@ const WorkoutScreen = () => {
               <Text style={styles.pageSubtitle}>Ready to sweat?</Text>
               <Text style={styles.pageTitle}>Discover</Text>
             </View>
-            <TouchableOpacity style={styles.iconBtn}>
-              <Ionicons name="options-outline" size={24} color={colors.text} />
-            </TouchableOpacity>
           </View>
 
           <View style={styles.searchContainer}>
@@ -354,18 +420,17 @@ const WorkoutScreen = () => {
                 <View key={workout.id}>
                   <TouchableOpacity activeOpacity={0.9} onPress={() => setSelectedWorkout(workout)} style={[styles.card, isFeatured && styles.cardFeatured]}>
                     <View style={styles.cardImageContainer}>
-                       {/* REMOVED GIF LOGIC HERE - Just premium static images */}
                        <Image source={{ uri: workout.image }} style={styles.cardImage} resizeMode="cover" />
                     </View>
                     
                     {workout.smallSpace && (
-                      <BlurView intensity={60} tint="dark" experimentalBlurMethod="dimezisBlurView" style={styles.smallSpaceBadge}>
+                      <GlassContainer intensity={60} tint="dark" style={styles.smallSpaceBadge}>
                         <Ionicons name="volume-mute" size={12} color="#FFF" />
                         <Text style={styles.smallSpaceText}>Silent</Text>
-                      </BlurView>
+                      </GlassContainer>
                     )}
 
-                    <BlurView intensity={80} tint={theme === 'dark' ? 'dark' : 'light'} experimentalBlurMethod="dimezisBlurView" style={styles.glassInfoPanel}>
+                    <GlassContainer intensity={80} tint={theme === 'dark' ? 'dark' : 'light'} style={styles.glassInfoPanel}>
                       <View style={{ flex: 1 }}>
                         <Text style={styles.glassTitle}>{workout.title}</Text>
                         <View style={styles.glassMetaRow}>
@@ -379,7 +444,7 @@ const WorkoutScreen = () => {
                       <View style={styles.glassPlayBtn}>
                         <Ionicons name="play" size={20} color={colors.primary} style={{marginLeft: 2}} />
                       </View>
-                    </BlurView>
+                    </GlassContainer>
                   </TouchableOpacity>
 
                   {isFeatured && (
@@ -396,7 +461,6 @@ const WorkoutScreen = () => {
             )}
           </ScrollView>
 
-          {/* REVAMPED BOTTOM SHEET MODAL */}
           <Modal visible={!!selectedWorkout} animationType="slide" transparent>
             <View style={styles.modalOverlay}>
               <View style={styles.modalContent}>
@@ -406,14 +470,13 @@ const WorkoutScreen = () => {
                         <Image source={{ uri: selectedWorkout.image }} style={styles.modalImage} resizeMode="cover" />
                         <LinearGradient colors={['rgba(0,0,0,0.6)', 'transparent']} style={styles.modalTopGradient} />
                         
-                        <BlurView intensity={80} tint="dark" experimentalBlurMethod="dimezisBlurView" style={[styles.closeModalBtn, { top: insets.top + 10 }]}>
+                        <GlassContainer intensity={80} tint="dark" style={[styles.closeModalBtn, { top: insets.top + 10 }]}>
                           <TouchableOpacity onPress={() => setSelectedWorkout(null)}>
                             <Ionicons name="close" size={24} color="#FFF" />
                           </TouchableOpacity>
-                        </BlurView>
+                        </GlassContainer>
                     </View>
 
-                    {/* The Bottom Sheet Body */}
                     <View style={styles.modalBodyWrapper}>
                       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 150, paddingHorizontal: 24, paddingTop: 30 }}>
                         
@@ -442,7 +505,6 @@ const WorkoutScreen = () => {
 
                         <Text style={styles.sectionHeading}>Routine Flow</Text>
                         
-                        {/* REVAMPED DASHED TIMELINE */}
                         <View style={styles.timelineContainer}>
                           {selectedWorkout.exercises.map((ex, i) => (
                             <View key={i} style={styles.timelineRow}>
@@ -502,7 +564,6 @@ const getStyles = (theme, colors, isLandscape, insets) => StyleSheet.create({
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, paddingTop: 10, paddingBottom: 16 },
   pageSubtitle: { fontSize: 14, fontWeight: '600', color: colors.textDim, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 4 },
   pageTitle: { fontSize: 34, fontWeight: 'bold', color: colors.text, letterSpacing: -0.5 },
-  iconBtn: { padding: 12, backgroundColor: colors.surface, borderRadius: 50 },
   
   searchContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: colors.surface, marginHorizontal: 20, borderRadius: 24, paddingHorizontal: 16, height: 50 },
   searchInput: { flex: 1, color: colors.text, fontSize: 16, height: '100%', marginLeft: 8 },
@@ -544,13 +605,11 @@ const getStyles = (theme, colors, isLandscape, insets) => StyleSheet.create({
   modalOverlay: { flex: 1, backgroundColor: colors.background },
   modalContent: { flex: 1, backgroundColor: colors.background },
   
-  // Taller Hero for the Bottom Sheet Look
   modalHero: { width: '100%', height: 450, position: 'relative' },
   modalImage: { width: '100%', height: '100%' },
   modalTopGradient: { position: 'absolute', width: '100%', height: 150, top: 0 },
   closeModalBtn: { position: 'absolute', right: 20, width: 44, height: 44, borderRadius: 22, justifyContent: 'center', alignItems: 'center', overflow: 'hidden' },
   
-  // The Bottom Sheet overlay
   modalBodyWrapper: { flex: 1, backgroundColor: colors.background, marginTop: -60, borderTopLeftRadius: 40, borderTopRightRadius: 40, overflow: 'hidden', shadowColor: '#000', shadowOffset: {width: 0, height: -10}, shadowOpacity: 0.1, shadowRadius: 20, elevation: 20 },
   
   pillRow: { flexDirection: 'row', marginBottom: 16 },
@@ -568,10 +627,8 @@ const getStyles = (theme, colors, isLandscape, insets) => StyleSheet.create({
   timelineRow: { flexDirection: 'row', marginBottom: 20 },
   timelineGraphics: { width: 40, alignItems: 'center' },
   
-  // Glowing Dot
   timelineDotOuter: { width: 20, height: 20, borderRadius: 10, backgroundColor: 'rgba(58, 183, 255, 0.2)', justifyContent: 'center', alignItems: 'center', marginTop: 20 },
   timelineDotInner: { width: 10, height: 10, borderRadius: 5, backgroundColor: colors.primary },
-  // Dashed line
   timelineDashedLine: { width: 1, flex: 1, borderStyle: 'dashed', borderWidth: 1, borderColor: colors.border, marginTop: 8, marginBottom: -20 },
   
   timelineCard: { flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: colors.surface, padding: 12, borderRadius: 24, borderWidth: 1, borderColor: 'transparent' },
@@ -585,7 +642,6 @@ const getStyles = (theme, colors, isLandscape, insets) => StyleSheet.create({
   startBtn: { flexDirection: 'row', backgroundColor: colors.primary, borderRadius: 32, paddingVertical: 20, justifyContent: 'center', alignItems: 'center', elevation: 10, shadowColor: colors.primary, shadowOffset: {width: 0, height: 8}, shadowOpacity: 0.4, shadowRadius: 16 },
   startBtnText: { color: '#000', fontSize: 16, fontWeight: 'bold', marginRight: 8, letterSpacing: 1 },
 
-  // --- RESPONSIVE PLAYER STYLES ---
   playerContainer: { flex: 1 }, 
   landscapeWrapper: { flex: 1, flexDirection: 'row' },
   portraitWrapper: { flex: 1, flexDirection: 'column' },
