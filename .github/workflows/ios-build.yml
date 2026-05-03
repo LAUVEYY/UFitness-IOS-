@@ -24,20 +24,21 @@ jobs:
           node-version: 20
           cache: 'npm'
 
+      - name: 🛠️ Install xcbeautify
+        run: brew install xcbeautify
+
       - name: 📦 Install NPM Dependencies
         run: npm install
 
-      - name: 🏗️ Generate Native iOS Project (Liquid Glass Linking)
+      - name: 🏗️ Generate Native iOS Project
         run: npx expo prebuild --platform ios --clean
 
-      - name: 🔗 Install CocoaPods
+      - name: 🔗 Install CocoaPods (Forced Update)
         run: |
           cd ios
-          pod install
+          pod install --repo-update
 
       - name: 🔨 Compile App (No Code Signing)
-        # We use pipefail so if xcodebuild fails, the step fails.
-        # We pipe the output to 'tee' so you can watch it live AND save it to xcodebuild.log
         run: |
           set -o pipefail
           xcodebuild clean build \
@@ -46,25 +47,16 @@ jobs:
             -configuration Release \
             -sdk iphoneos \
             -destination "generic/platform=iOS" \
-            -derivedDataPath ./build \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
-            COMPILER_INDEX_STORE_ENABLE=NO | tee xcodebuild.log
-
-      - name: 🚨 Upload Error Logs
-        # 'always()' ensures this runs even if the compile step above crashes!
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: xcodebuild-error-logs
-          path: xcodebuild.log
-          retention-days: 7
+            COMPILER_INDEX_STORE_ENABLE=NO \
+            CONFIGURATION_BUILD_DIR="$(pwd)/build_output" | xcbeautify
 
       - name: 📦 Package into IPA for Sideloadly
         run: |
           mkdir -p Payload
-          mv ./build/Build/Products/Release-iphoneos/UFitness.app Payload/
+          mv ./build_output/UFitness.app Payload/
           zip -r UFitness.ipa Payload
 
       - name: 📤 Upload IPA Artifact
