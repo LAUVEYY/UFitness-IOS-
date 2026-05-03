@@ -30,16 +30,19 @@ jobs:
       - name: 📦 Install NPM Dependencies
         run: npm install
 
-      - name: 🏗️ Generate Native iOS Project
+      - name: 🧨 Purge Stale iOS Folder (Crucial for Arch Switch)
+        # This completely wipes the cached iOS folder so CocoaPods forgets about the New Architecture
+        run: rm -rf ios
+
+      - name: 🏗️ Generate Pristine Native iOS Project
         run: npx expo prebuild --platform ios --clean
 
-      - name: 🔗 Install CocoaPods (Forced Update)
+      - name: 🔗 Install CocoaPods
         run: |
           cd ios
-          pod install --repo-update
+          pod install
 
-      - name: 🔨 Compile App (Using Default DerivedData)
-        # Removing the directory overrides fixes the RCTSwiftUI module map crash
+      - name: 🔨 Compile App (Default Architecture)
         run: |
           set -o pipefail
           xcodebuild clean build \
